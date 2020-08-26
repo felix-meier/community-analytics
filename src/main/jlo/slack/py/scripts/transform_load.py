@@ -63,7 +63,7 @@ def dd_writefile(key,filename,pdf,index=False):
 
 def dd_readfile(key,filename):
   try:
-    pdf = pandas.read_csv(data_home+'/'+key+'/'+filename+'.csv',dtype={'ts':str,'thread_ts':str,'batch':str},encoding='utf-8');
+    pdf = pandas.read_csv(data_home+'/'+key+'/'+filename+'.csv',dtype={'ts':str,'thread_ts':str,'batch':str,'index':int, 'category_index':int},encoding='utf-8');
     return pdf;
   except Exception as err:
     print(err);
@@ -87,7 +87,7 @@ def batchstr_to_datetime(s):
 def datetime_to_epochstr(d):
   return d.strftime('%s');
 
-def dd_userdata(result):
+def dd_userdata(result,index):
   filename = "user_data";
   try:
     members = result['members'];
@@ -110,14 +110,17 @@ def dd_userdata(result):
       row['batch'] = b
       ll.append(row)
     ddpdf = pandas.DataFrame.from_records(ll)
+    ddpdf = ddpdf.reset_index();
+    ddpdf['index'] = ddpdf.apply(lambda x: x['index'] + index,axis=1)
     # pdf = pandas.DataFrame.from_records(users);
     # ddpdf = pdf[['id','name','real_name','tz']];
     dd_writefile(master,filename,ddpdf)
+    return len(ddpdf) + index
   except Exception as err:
     print('Error')
     print(err)
 
-def dd_channeldata(result):
+def dd_channeldata(result,index):
   filename = "channel_data";
   try:
     channels = result['channels'];
@@ -148,8 +151,11 @@ def dd_channeldata(result):
       l.append({'id': id, 'name': channel_name, 'type': channel_type, 'class': channel_class, 'is_archived': is_archived, 'is_private': is_private });
       retrieve_messages(id);
     ddpdf = pandas.DataFrame.from_records(l);
+    ddpdf = ddpdf.reset_index();
+    ddpdf['index'] = ddpdf.apply(lambda x: x['index'] + index,axis=1)
     if len(ddpdf.index) > 0:
       dd_writefile(master,filename,ddpdf)
+    return len(ddpdf) + index
   except Exception as err:
     print('Error')
     print(err)
@@ -286,6 +292,7 @@ def dd_polldata(id,result):
 def retrieve_userdata():
   try:
     loop = True;
+    index = 0;
     files = glob.glob(data_home+'/'+batch+'/api/user_list*.json')
     for file in files:
       print('retrieving user_data - '+file);
@@ -303,7 +310,7 @@ def retrieve_userdata():
           time.sleep(0.1)
       if result == None:
         exit(-1);
-      dd_userdata(result);
+      index = dd_userdata(result,index);
   except Exception as err:
     print('Error')
     print(err)
@@ -311,6 +318,7 @@ def retrieve_userdata():
 def retrieve_channeldata():
   try:
     loop = True;
+    index = 0;
     files = glob.glob(data_home+'/'+batch+'/api/conversation_list*.json')
     files.sort(key = sortfile_key)
     # assuming it is in order of "filename" - though there are conflicting messages
@@ -330,7 +338,7 @@ def retrieve_channeldata():
           time.sleep(0.1)
       if result == None:
         exit(-1);
-      dd_channeldata(result);
+      index = dd_channeldata(result,index);
   except Exception as err:
     print('Error')
     print(err)
@@ -473,7 +481,7 @@ def convert_to_json():
     print('Error')
     print(err)
 
-def _merge_data(filename,index_cols,cols,existing_cols=[]):
+def _merge_data(filename,index_cols,cols,existing_cols=[],sort_cols=[]):
   # for merging 
   # - we will append new records
   # - we will update existing records based upon key (just take the latest record even if it is the same)
@@ -482,12 +490,20 @@ def _merge_data(filename,index_cols,cols,existing_cols=[]):
     print(index_cols);
     print(cols);
     print(existing_cols);
+    print(sort_cols);
     inpdf = dd_readfile(master,filename);
     inpdf = inpdf.sort_values(index_cols);
     print(inpdf);
     mpdf = dd_readfile('master/csv',filename);
+    if 'index' in mpdf:
+      mpdf = mpdf.drop(columns='index')
+    if 'index' in inpdf:
+      inpdf = inpdf.drop(columns='index')
     print(mpdf);
     if mpdf.empty and inpdf.empty == False:
+      inpdf = inpdf[cols];
+      inpdf = inpdf.reset_index(drop=True);
+      inpdf = inpdf.reset_index();
       dd_writefile('master/csv',filename,inpdf);
       print('initialising users dataset: '+str(len(inpdf)));
     else:
@@ -521,6 +537,9 @@ def _merge_data(filename,index_cols,cols,existing_cols=[]):
       insertpdf = insertpdf.drop_duplicates();
       insertpdf = insertpdf.sort_values(index_cols);
       if insertpdf.empty == False:
+        insertpdf = insertpdf[cols];
+        insertpdf = insertpdf.reset_index(drop=True);
+        insertpdf = insertpdf.reset_index();
         dd_writefile(master,filename+'_insert',insertpdf);
         print('adding users: '+str(len(insertpdf)));
       updatepdf = df[df['_merge'] == 'both'];
@@ -530,6 +549,9 @@ def _merge_data(filename,index_cols,cols,existing_cols=[]):
       updatepdf = updatepdf.sort_values(index_cols);
       print(updatepdf);
       if updatepdf.empty == False:
+        updatepdf = updatepdf[cols];
+        updatepdf = updatepdf.reset_index(drop=True);
+        updatepdf = updatepdf.reset_index();
         dd_writefile(master,filename+'_update',updatepdf);
         print('updating users: '+str(len(updatepdf)));
       deltapdf = insertpdf.append(updatepdf,ignore_index=False);
@@ -537,11 +559,16 @@ def _merge_data(filename,index_cols,cols,existing_cols=[]):
       unchangedpdf = df[df['_merge'] == 'left_only'];
       unchangedpdf = unchangedpdf[merged_cols];
       unchangedpdf = unchangedpdf.rename(columns=merged_rename_cols);
-      fullpdf = unchangedpdf.append(deltapdf,ignore_index=False);
+      fullpdf = unchangedpdf.append(deltapdf,ignore_index=True);
       fullpdf = fullpdf.drop_duplicates();
       fullpdf = fullpdf.sort_values(index_cols);
       if fullpdf.empty == False:
         dd_backupfile(filename);
+        fullpdf = fullpdf[cols];
+        if len(sort_cols) > 0:
+          fullpdf = fullpdf.sort_values(sort_cols);
+        fullpdf = fullpdf.reset_index(drop=True);
+        fullpdf = fullpdf.reset_index();
         dd_writefile('master/csv',filename,fullpdf);
         print('merging: '+str(len(fullpdf)));
   except Exception as err:
@@ -553,8 +580,9 @@ def merge_userdata():
   cols = ['id','name','real_name','tz','email','batch']
   index_cols = ['id']
   existing_cols = ['batch']
+  sort_cols = ['batch']
   print('merging user dataset');
-  _merge_data(filename,index_cols,cols,existing_cols);
+  _merge_data(filename,index_cols,cols,existing_cols,sort_cols);
 
 def merge_channeldata():
   filename = 'channel_data'
@@ -586,7 +614,7 @@ def merge_reactiondata():
 
 def merge_filedata():
   filename = 'file_data'
-  cols = ["id","channel","name","time","user"]
+  cols = ["id","channel","name","time","user_id"]
   index_cols = ["id","channel"]
   print('merging channel dataset');
   _merge_data(filename,index_cols,cols);
@@ -660,7 +688,7 @@ def create_useractivedata():
 
     ll = []
     for user in user_pdf.values.tolist():
-      userconv_pdf = conversation_pdf[conversation_pdf['user_id'] == user[0]];
+      userconv_pdf = conversation_pdf[conversation_pdf['user_id'] == user[1]];
       join_date = ''
       first_message_date = ''
       last_message_date = ''
@@ -678,20 +706,21 @@ def create_useractivedata():
           message_count = len(useract_pdf)
           first_message_date = useract_pdf['ts'].iloc[0]
           last_message_date = useract_pdf['ts'].iloc[len(useract_pdf)-1]
-        if float(user[5]) > float(join_date):
+        if float(user[6]) > float(join_date):
           invite_date = join_date
         else:
-          invite_date = user[5]
+          invite_date = user[6]
       else:
-        invite_date = user[5]
-      userreact_pdf = reaction_pdf[reaction_pdf['user_id'] == user[0]];
+        invite_date = user[6]
+      userreact_pdf = reaction_pdf[reaction_pdf['user_id'] == user[1]];
       if len(userreact_pdf) > 0:
         reaction_count = len(userreact_pdf)
         first_reaction_date = userreact_pdf['ts'].iloc[0]
         last_reaction_date = userreact_pdf['ts'].iloc[len(userreact_pdf)-1]
-      ll.append({'user_id': user[0], 'name': user[1], 'invite_date': invite_date, 'join_date': join_date, 'message_count': message_count, 'first_message_date': first_message_date, 'last_message_date': last_message_date, 'reaction_count': reaction_count, 'first_reaction_date': first_reaction_date, 'last_reaction_date': last_reaction_date})
+      ll.append({'user_id': user[1], 'name': user[2], 'invite_date': invite_date, 'join_date': join_date, 'message_count': message_count, 'first_message_date': first_message_date, 'last_message_date': last_message_date, 'reaction_count': reaction_count, 'first_reaction_date': first_reaction_date, 'last_reaction_date': last_reaction_date})
 
     ddpdf = pandas.DataFrame.from_records(ll);
+    # print(ddpdf)
     dd_writefile(metrics,filename,ddpdf);
   except Exception as err:
     print('Error');

@@ -4,17 +4,36 @@ from pyspark.sql import SparkSession
 from pyspark.conf import SparkConf
 from pyspark.sql.types import *
 from pyspark.sql.functions import *
+from pyspark.sql.window import Window
 
 config = configparser.RawConfigParser()
 config.read('database.properties')
 
-url = config.get('postgres-slack','database.url')
-driver = config.get('postgres-slack','database.driver')
-user = config.get('postgres-slack','database.user')
-password = config.get('postgres-slack','database.password')
-jars = config.get('postgres-slack','spark.jars')
+url = config.get('oracle-slack','database.url')
+driver = config.get('oracle-slack','database.driver')
+user = config.get('oracle-slack','database.user')
+password = config.get('oracle-slack','database.password')
+jars = config.get('oracle-slack','spark.jars')
+
+print(url)
+print(driver)
+print(user)
+print(jars)
 
 spark = SparkSession.builder.master('local').appName('SlackBot').config('spark.jars',jars).getOrCreate();
+
+def alter_column(df,data_name,col):
+  df2 = df.withColumn(col+'_len', length(encode(df[col],'utf-8')))
+  max_value = df2.select(max(col+'_len')).collect()[0][0]
+  print(max_value)
+  dbdf = spark.read.jdbc(url, data_name, properties={'user': user, 'password': password, 'driver': driver})
+  dbdf2 = dbdf.withColumn(col+'_len', length(dbdf[col]))
+  db_max_value = dbdf2.select(max(col+'_len')).collect()[0][0]
+  print(db_max_value)
+  if db_max_value != None and max_value < db_max_value:
+    return col + ' VARCHAR('+ str(db_max_value) +')'
+  else:
+    return col + ' VARCHAR('+ str(max_value) +')'
 
 def load_channel():
   data_name = 'channel_data'
@@ -29,7 +48,9 @@ def load_channel():
   dd = tl.dd_readfile(dataset,data_name)
   df = spark.createDataFrame(dd,schema)
   df.show()
-  df.write.jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
+  table_name = data_name.upper()
+  col_types = alter_column(df,table_name,'name')
+  df.write.option("createTableColumnTypes", col_types).jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
 
 def load_channel_ref():
   data_name = 'channel_ref'
@@ -56,7 +77,11 @@ def load_user():
   dd = tl.dd_readfile(dataset,data_name)
   df = spark.createDataFrame(dd,dd_schema)
   df.show()
-  df.write.jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
+  table_name = data_name.upper()
+  col_types = alter_column(df,table_name,'email')
+  col_types = col_types + ', ' + alter_column(df,table_name,'name')
+  col_types = col_types + ', ' + alter_column(df,table_name,'real_name')
+  df.write.option("createTableColumnTypes", col_types).jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
 
 def load_reaction():
   data_name = 'reaction_data'
@@ -70,7 +95,9 @@ def load_reaction():
   dd = tl.dd_readfile(dataset,data_name)
   df = spark.createDataFrame(dd,schema)
   df.show()
-  df.write.jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
+  table_name = data_name.upper()
+  col_types = alter_column(df,table_name,'reaction')
+  df.write.option("createTableColumnTypes", col_types).jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
 
 def load_poll():
   data_name = 'poll_data'
@@ -88,7 +115,10 @@ def load_poll():
   df = df.withColumn("time",to_timestamp(col("time_as_str")))
   df = df.drop("time_as_str")
   df.show()
-  df.write.jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
+  table_name = data_name.upper()
+  col_types = alter_column(df,table_name,'text')
+  col_types = col_types + ', ' + alter_column(df,table_name,'vote_item')
+  df.write.option("createTableColumnTypes", col_types).jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
 
 def load_file():
   data_name = 'file_data'
@@ -105,7 +135,9 @@ def load_file():
   df = df.withColumn("time",to_timestamp(col("time_as_str")))
   df = df.drop("time_as_str")
   df.show()
-  df.write.jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
+  table_name = data_name.upper()
+  col_types = alter_column(df,table_name,'name')
+  df.write.option("createTableColumnTypes", col_types).jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
 
 def load_conversation():
   data_name = 'conversation_data'
@@ -130,7 +162,10 @@ def load_conversation():
   df = df.withColumn("time",to_timestamp(col("time_as_str")))
   df = df.drop("time_as_str")
   df.show()
-  df.write.jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
+  table_name = data_name.upper()
+  col_types = alter_column(df,table_name,'real_name')
+  col_types = col_types + ', ' + alter_column(df,table_name,'text')
+  df.write.option("createTableColumnTypes", col_types).jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
 
 def load_tag():
   data_name = 'tag_data'
@@ -143,7 +178,10 @@ def load_tag():
   dd = tl.dd_readfile(dataset,data_name)
   df = spark.createDataFrame(dd,schema)
   df.show()
-  df.write.jdbc(url, data_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
+  table_name = data_name.upper()
+  col_types = alter_column(df,table_name,'tag')
+  col_types = col_types + ', ' + alter_column(df,table_name,'nice_tag')
+  df.write.option("createTableColumnTypes", col_types).jdbc(url, table_name, mode='overwrite', properties={'user': user, 'password': password, 'driver': driver})
 
 def load_node():
   data_name = 'node_data'
