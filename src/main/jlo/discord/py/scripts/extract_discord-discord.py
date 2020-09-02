@@ -623,46 +623,12 @@ async def retrieve_channeldata(self):
       exit(-1);
     formatted_result = []
     for entry in result:
-      formatted_result.append({'id': str(entry.id), 'name': entry.name, 'type': entry.type.name, 'class': get_class(entry),
-                 'is_archived': False, 'is_private': is_private(entry)});
       if entry.type.name == "text":
+        formatted_result.append(
+          {'id': str(entry.id), 'name': entry.name, 'type': entry.type.name, 'class': get_class(entry),
+           'is_archived': False, 'is_private': is_private(entry)});
         await retrieve_messagedata(self, entry.id)
     dd_writejson('conversation_list','all',formatted_result);
-    #parse_channeldata(result);
-  except Exception as err:
-    print('Error')
-    print(err)
-
-async def retrieve_filedata(self):
-  try:
-    print('retrieving file_data');
-    a = 0;
-    result = None
-    while a < 3 and result == None:
-      try:
-        channels = list(self.get_all_channels())
-      except Exception as err:
-        print('error in discord call')
-        print(err);
-        a += 1
-        result = None
-        time.sleep(0.1)
-      result = []
-      for channel in channels:
-        if channel.type.name == "text":
-          messages = await channel.history().flatten()
-          for message in messages:
-            for attach in message.attachments:
-              print(attach.id)
-              print(attach.filename)
-              os.makedirs(data_home + '/' + batch + '/files/' + str(attach.id));
-              await attach.save(data_home + '/' + batch + '/files/' + str(attach.id) + '/' + attach.filename)
-              result.append(
-                {'id': attach.id, 'channel': channel.id, 'name': attach.filename, 'time': datetime_to_isostr(message.created_at),
-                 'user': message.author.id})
-    if result == None:
-      exit(-1);
-    dd_writejson('files_list','all',result);
     #parse_channeldata(result);
   except Exception as err:
     print('Error')
@@ -687,11 +653,47 @@ async def retrieve_messagedata(self, channel_id):
     if result == None:
       exit(-1);
     formatted_result = []
+    filedata_result = []
+    tagdata_result = []
+    reaction_result = []
     for entry in result:
       formatted_result.append({'channel': str(channel.id), 'type': 'message', 'subtype': entry.type.name, 'ts': str(entry.id),
                  'thread_ts': '', 'time': datetime_to_isostr(entry.created_at), 'reply_count': '',
                  'user': str(entry.author.id), 'text': entry.system_content});
+      for attach in entry.attachments:
+        print(attach.id)
+        print(attach.filename)
+        os.makedirs(data_home + '/' + batch + '/files/' + str(attach.id));
+        await attach.save(data_home + '/' + batch + '/files/' + str(attach.id) + '/' + attach.filename)
+        filedata_result.append(
+          {'id': attach.id, 'channel': channel.id, 'name': attach.filename, 'time': datetime_to_isostr(entry.created_at),
+           'user': entry.author.id})
+      for mention in entry.mentions:
+        tagdata_result.append(
+          {'channel': str(channel.id), 'ts': str(entry.id), 'tag': str(mention.id), 'nice_tag': mention.display_name,
+           'type': 'user'})
+      for channel_mention in entry.channel_mentions:
+        tagdata_result.append({'channel': str(channel.id), 'ts': str(entry.id), 'tag': str(channel_mention.id),
+                    'nice_tag': str(channel_mention), 'type': 'channel'})
+      if entry.mention_everyone and entry.system_content.find("@everyone") != -1:
+        tagdata_result.append({'channel': str(channel.id), 'ts': str(entry.id), 'tag': 'everyone', 'nice_tag': 'everyone',
+                    'type': 'user'})
+      if entry.mention_everyone and entry.system_content.find("@here") != -1:
+        tagdata_result.append(
+          {'channel': str(channel.id), 'ts': str(entry.id), 'tag': 'here', 'nice_tag': 'here', 'type': 'user'})
+      for reaction in entry.reactions:
+        # print(reaction.count)
+        print(emoji.demojize(reaction.emoji,use_aliases=True))
+        tag = emoji.demojize(reaction.emoji,use_aliases=True)
+        # print(reaction.message)
+        users = await reaction.users().flatten()
+        # print(users)
+        for user in users:
+          reaction_result.append({ 'channel': str(channel.id), 'ts': str(entry.id), 'thread_ts': '', 'user': str(user.id), 'reaction': tag });
     dd_writejson('message_list',str(channel_id),formatted_result);
+    dd_writejson('files_list',str(channel_id),filedata_result);
+    dd_writejson('tags_list',str(channel_id),tagdata_result);
+    dd_writejson('reactions_list',str(channel_id),reaction_result);
     #parse_channeldata(result);
   except Exception as err:
     print('Error')
@@ -703,7 +705,6 @@ class App(discord.Client):
   async def on_ready(self):
     await retrieve_channeldata(self)
     await retrieve_userdata(self)
-    await retrieve_filedata(self)
     await self.logout()
 
 def exec_stages():
