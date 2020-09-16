@@ -599,7 +599,7 @@ async def retrieve_userdata(self):
     formatted_result = []
     for entry in result:
       #print(entry)
-      formatted_result.append({ 'id': str(entry.id), 'name': entry.name, 'real_name': entry.display_name, 'tz': '', 'email': '', 'batch': str(batch) });
+      formatted_result.append({ 'id': str(entry.id), 'name': entry.name, 'real_name': entry.display_name, 'tz': '', 'batch': str(batch) });
     dd_writejson('user_list','all',formatted_result);
   except Exception as err:
     print('Error')
