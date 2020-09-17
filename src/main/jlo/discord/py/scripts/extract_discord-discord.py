@@ -657,8 +657,8 @@ async def retrieve_messagedata(self, channel_id):
     tagdata_result = []
     reaction_result = []
     for entry in result:
-      formatted_result.append({'channel': str(channel.id), 'type': 'message', 'subtype': entry.type.name, 'ts': str(entry.id),
-                 'thread_ts': '', 'time': datetime_to_isostr(entry.created_at), 'reply_count': '',
+      formatted_result.append({'channel': str(channel.id), 'type': 'message', 'subtype': entry.type.name, 'id': str(entry.id), 'ts': str(entry.created_at),
+                 'thread_ts': '', 'time': datetime_to_isostr(entry.created_at), 'reply_count': 0,
                  'user': str(entry.author.id), 'text': entry.system_content});
       for attach in entry.attachments:
         print(attach.id)
@@ -690,7 +690,7 @@ async def retrieve_messagedata(self, channel_id):
         # print(users)
         for user in users:
           reaction_result.append({ 'channel': str(channel.id), 'ts': str(entry.id), 'thread_ts': '', 'user': str(user.id), 'reaction': tag });
-    dd_writejson('message_list',str(channel_id),formatted_result);
+    dd_writejson('conversation_history',str(channel_id),formatted_result);
     dd_writejson('files_list',str(channel_id),filedata_result);
     dd_writejson('tags_list',str(channel_id),tagdata_result);
     dd_writejson('reactions_list',str(channel_id),reaction_result);

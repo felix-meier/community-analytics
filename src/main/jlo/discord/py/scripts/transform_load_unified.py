@@ -58,7 +58,8 @@ def dd_backupfile(filename):
   os.rename(data_home+'/master/csv/'+filename+'.csv',data_home+'/master/csv/'+filename+'-'+batch+'.csv')
 
 def dd_writefile(key,filename,pdf,index=False):
-  with open(data_home+'/'+key+'/'+filename+'.csv','a',encoding='utf-8') as f:
+  # newline='' = works with both unix and windows style line endings
+  with open(data_home+'/'+key+'/'+filename+'.csv','a',encoding='utf-8',newline='') as f:
     pdf.to_csv(f,index=index,quoting=csv.QUOTE_ALL,mode='a',header=f.tell()==0);
 
 def dd_readfile(key,filename):
@@ -110,6 +111,8 @@ def dd_userdata(result):
           row['email'] = member['profile']['email']
         else:
           row['email'] = ''
+      else:
+        row['email'] = ''
       if 'real_name' in member:
         row['real_name'] = member['real_name']
       row['batch'] = b
@@ -165,9 +168,13 @@ def dd_channeldata(result):
 
 def dd_messagedata(id,result):
   filename = "message_data";
+  #print(result)
   try:
-    messages = result['messages']
-    for message in result['messages']:
+    if 'messages' in result:
+      messages = result['messages']['messages']
+    else:
+      messages = result
+    for message in result:
       if 'reply_count' in message and message['reply_count'] != None and message['reply_count'] > 0:
         print('replies:'+message['ts']+','+str(message['reply_count']));
         retrieve_threads(id,message['ts']);
@@ -191,6 +198,8 @@ def dd_messagedata(id,result):
       if 'text' not in ddpdf:
         ddpdf['text'] = None;
       ddpdf['time'] = ddpdf['ts'].apply(epochstr_to_isostr);
+      print(ddpdf['time'])
+      print(ddpdf['ts'])
       ddpdf = ddpdf[['channel','type','subtype','ts','thread_ts','time','reply_count','user','text']];
       dd_writefile(master,filename,ddpdf)
   except Exception as err:
