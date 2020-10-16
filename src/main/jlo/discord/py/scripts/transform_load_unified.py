@@ -23,6 +23,7 @@ sign_token = None
 access_token = None
 user_token = None
 data_home = None
+data_type = None
 
 def dd_makedirs():
   try:
@@ -50,7 +51,12 @@ def sortfile_key(file):
   return int(file[-21:-5]);
 
 def dd_setdatahome(home):
+  global data_home
   data_home = home;
+
+def dd_setdatatype(type):
+  global data_type
+  data_type = type;
 
 def dd_backupfile(filename):
   backuptime = datetime.now().strftime('%Y%m%d%H%M%S')
@@ -64,7 +70,7 @@ def dd_writefile(key,filename,pdf,index=False):
 
 def dd_readfile(key,filename):
   try:
-    pdf = pandas.read_csv(data_home+'/'+key+'/'+filename+'.csv',dtype={'ts':str,'thread_ts':str,'batch':str},encoding='utf-8');
+    pdf = pandas.read_csv(data_home+'/'+key+'/'+filename+'.csv',dtype={'ts':str,'thread_ts':str,'batch':str,'id':str,'user':str,'channel':str},encoding='utf-8');
     return pdf;
   except Exception as err:
     print(err);
@@ -79,7 +85,10 @@ def dd_readref(filename):
     return pandas.DataFrame();
 
 def epochstr_to_isostr(s):
-  return time.strftime('%Y-%m-%dT%H:%M:%S.000',time.localtime(float(s)));
+  epoch = (int(s) >> 22) + 1420070400000
+  epoch = round(epoch / 1000)
+  isostr = time.strftime('%Y-%m-%dT%H:%M:%S.000',time.localtime(float(epoch)));
+  return isostr
   # return datetime.utcfromtimestamp(time.gmtime(float(s)));
 
 def batchstr_to_datetime(s):
@@ -152,11 +161,11 @@ def dd_channeldata(result):
       else:
         channel_class = 'public';
       if 'name' in channel:
-        channel_name = channel['name'] 
+        channel_name = channel['name']
       if 'is_archived' in channel:
-        is_archived = channel['is_archived'] 
+        is_archived = channel['is_archived']
       if 'is_private' in channel:
-        is_private = channel['is_private'] 
+        is_private = channel['is_private']
       l.append({'id': id, 'name': channel_name, 'type': channel_type, 'class': channel_class, 'is_archived': is_archived, 'is_private': is_private });
       retrieve_messages(id);
     ddpdf = pandas.DataFrame.from_records(l);
@@ -167,20 +176,18 @@ def dd_channeldata(result):
     print(err)
 
 def dd_messagedata(id,result):
-  filename = "message_data";
-  #print(result)
-  try:
+    #filename = "message_data";
+    filename = "conversation_history";
+    #print(result)
+    #try:
     if 'messages' in result:
-      messages = result['messages']['messages']
-    else:
-      messages = result
+      result = result['messages']['messages']
     for message in result:
       if 'reply_count' in message and message['reply_count'] != None and message['reply_count'] > 0:
         print('replies:'+message['ts']+','+str(message['reply_count']));
         retrieve_threads(id,message['ts']);
-      else:
-        dd_reactiondata(id,message)
-    ddpdf = pandas.DataFrame.from_records(messages);
+      dd_reactiondata(id,message)
+    ddpdf = pandas.DataFrame.from_records(result);
     if len(ddpdf.index) > 0:
       ddpdf['channel'] = id;
       if 'type' not in ddpdf:
@@ -202,9 +209,9 @@ def dd_messagedata(id,result):
       print(ddpdf['ts'])
       ddpdf = ddpdf[['channel','type','subtype','ts','thread_ts','time','reply_count','user','text']];
       dd_writefile(master,filename,ddpdf)
-  except Exception as err:
-    print('Error - dd_messagedata')
-    print(err)
+    #except Exception as err:
+    #  print('Error - dd_messagedata')
+    #  print(err)
 
 def dd_threaddata(id,ts,result):
   filename = "thread_data";
@@ -493,7 +500,7 @@ def convert_to_json():
     print(err)
 
 def _merge_data(filename,index_cols,cols,existing_cols=[]):
-  # for merging 
+  # for merging
   # - we will append new records
   # - we will update existing records based upon key (just take the latest record even if it is the same)
   # - we will not delete old records
@@ -520,19 +527,19 @@ def _merge_data(filename,index_cols,cols,existing_cols=[]):
       insert_rename_cols = {};
       for col in cols:
         if col not in index_cols and col not in existing_cols and col in mpdf:
-          merged_cols.append(col+'_x'); 
+          merged_cols.append(col+'_x');
           merged_rename_cols[col+'_x'] = col;
-          insert_cols.append(col+'_x'); 
+          insert_cols.append(col+'_x');
           insert_rename_cols[col+'_x'] = col;
         elif col in existing_cols:
-          merged_cols.append(col+'_y'); 
+          merged_cols.append(col+'_y');
           merged_rename_cols[col+'_y'] = col;
-          insert_cols.append(col+'_x'); 
+          insert_cols.append(col+'_x');
           insert_rename_cols[col+'_x'] = col;
         else:
-          merged_cols.append(col); 
+          merged_cols.append(col);
           merged_rename_cols[col] = col;
-          insert_cols.append(col); 
+          insert_cols.append(col);
           insert_rename_cols[col] = col;
       insertpdf = df[df['_merge'] == 'left_only'];
       insertpdf = insertpdf[insert_cols];
@@ -568,7 +575,7 @@ def _merge_data(filename,index_cols,cols,existing_cols=[]):
     print(err)
 
 def merge_userdata():
-  filename = 'user_data' 
+  filename = 'user_data'
   cols = ['id','name','real_name','tz','email','batch']
   index_cols = ['id']
   existing_cols = ['batch']
@@ -583,7 +590,8 @@ def merge_channeldata():
   _merge_data(filename,index_cols,cols);
 
 def merge_messagedata():
-  filename = 'message_data'
+  #filename = 'message_data'
+  filename = 'conversation_history'
   cols = ["channel","type","subtype","ts","thread_ts","time","reply_count","user","text"]
   index_cols = ["channel","ts"]
   print('merging message dataset');
@@ -618,47 +626,62 @@ def merge_polldata():
   _merge_data(filename,index_cols,cols);
 
 def create_conversationdata():
-  filename = "conversation_data";
-  try:
-    message_pdf = dd_readfile(master,'message_data');
-    user_pdf = dd_readfile(master,'user_data');
-    thread_pdf = dd_readfile(master,'thread_data');
+    filename = "conversation_data";
+    try:
+      #message_pdf = dd_readfile(master,'message_data');
+      message_pdf = dd_readfile(master,'conversation_history');
+      user_pdf = dd_readfile(master,'user_data');
+      thread_pdf = dd_readfile(master,'thread_data');
+      # Use only subset of information (and create identical columns)
+      message_part_pdf = message_pdf[['channel','type','subtype','ts','thread_ts','time','user','text']];
+      if data_type == "slack":
+          zone_ref_pdf = dd_readref('zone');
+          country_ref_pdf = dd_readref('country');
+          thread_part_pdf = thread_pdf[['channel','type','subtype','ts','thread_ts','time','user','text']];
+      else:
+          thread_part_pdf = pandas.DataFrame();
+          # Merge message and thread data
+          conversation_part_pdf = message_part_pdf.append(thread_part_pdf,ignore_index=False);
+          conversation_part_pdf = conversation_part_pdf.drop_duplicates();
+      if data_type == "slack":
+          # From user data, split as a method to create default country (if timezone is not recognised).
+          tz_split = user_pdf['tz'].str.split('/',expand=True);
+          # Merge to create richer iso information
+          iso_ref_pdf = zone_ref_pdf.merge(country_ref_pdf,left_on='ISO',right_on='ISO2');
+          # Merge iso information with user (based upon timezone).
+          user_geo_pdf = user_pdf.merge(iso_ref_pdf,how='left',left_on='tz',right_on='TZ');
+          # Add country and city based upon user data timezone
+          user_geo_pdf['country']  = tz_split[0];
+          user_geo_pdf['city']  = tz_split[1];
+          # Mask NAN values of country based upon timezone information
+          user_geo_pdf['COUNTRY'] = user_geo_pdf['COUNTRY'].mask(pandas.isnull, user_geo_pdf['country']);
+          # Merge user data with conversation data based upon user id
+          conversation_geo_pdf = conversation_part_pdf.merge(user_geo_pdf,how='left',left_on='user',right_on='id');
+      else:
+          # Merge iso information with user (based upon timezone).
+          # user_geo_pdf = user_pdf.merge(iso_ref_pdf,how='left',left_on='tz',right_on='TZ');
+          user_geo_pdf = user_pdf;
+          # Add country and city based upon user data timezone
+          user_geo_pdf['ISO'] = '';
+          user_geo_pdf['country'] = '';
+          user_geo_pdf['city'] = '';
+          # Mask NAN values of country based upon timezone information
+          user_geo_pdf['COUNTRY'] = '';
+          # Merge user data with conversation data based upon user id
+          conversation_geo_pdf = conversation_part_pdf.merge(user_geo_pdf,how='left',left_on='user',right_on='id');
+      # Add a column (replica of ts) that can be used as an number
+      conversation_geo_pdf['ts_int'] = conversation_geo_pdf['ts']
+      # Select columns
+      conversation_pdf = conversation_geo_pdf[['channel','type','subtype','ts','thread_ts','ts_int','time','user','real_name','name','text','city','COUNTRY','ISO']];
+      # Rename columns
+      # remove all upper-case to allow easier postgres implementation (changed to lowercase)
+      # ddpdf = conversation_pdf.rename(columns={'channel':'CHANNEL','type':'TYPE','subtype':'SUBTYPE','ts':'TS','thread_ts':'THREAD_TS','ts_int':'TS_INT','time':'TIME','user':'USER','real_name':'REAL_NAME','name':'NAME','text':'TEXT','city':'CITY','COUNTRY':'COUNTRY','ISO':'ISO'});
+      ddpdf = conversation_pdf.rename(columns={'channel':'channel','type':'type','subtype':'subtype','ts':'ts','thread_ts':'thread_ts','ts_int':'ts_int','time':'time','user':'user','real_name':'real_name','name':'name','text':'text','city':'city','COUNTRY':'country','ISO':'iso'});
 
-    zone_ref_pdf = dd_readref('zone');
-    country_ref_pdf = dd_readref('country');
-
-    # Use only subset of information (and create identical columns)
-    message_part_pdf = message_pdf[['channel','type','subtype','ts','thread_ts','time','user','text']];
-    thread_part_pdf = thread_pdf[['channel','type','subtype','ts','thread_ts','time','user','text']];
-    # Merge message and thread data
-    conversation_part_pdf = message_part_pdf.append(thread_part_pdf,ignore_index=False);
-    conversation_part_pdf = conversation_part_pdf.drop_duplicates();
-    # From user data, split as a method to create default country (if timezone is not recognised).
-    tz_split = user_pdf['tz'].str.split('/',expand=True);
-    # Merge to create richer iso information
-    iso_ref_pdf = zone_ref_pdf.merge(country_ref_pdf,left_on='ISO',right_on='ISO2');
-    # Merge iso information with user (based upon timezone).
-    user_geo_pdf = user_pdf.merge(iso_ref_pdf,how='left',left_on='tz',right_on='TZ');
-    # Add country and city based upon user data timezone
-    user_geo_pdf['country']  = tz_split[0];
-    user_geo_pdf['city']  = tz_split[1];
-    # Mask NAN values of country based upon timezone information
-    user_geo_pdf['COUNTRY'] = user_geo_pdf['COUNTRY'].mask(pandas.isnull, user_geo_pdf['country']);
-    # Merge user data with conversation data based upon user id
-    conversation_geo_pdf = conversation_part_pdf.merge(user_geo_pdf,how='left',left_on='user',right_on='id');
-    # Add a column (replica of ts) that can be used as an number
-    conversation_geo_pdf['ts_int'] = conversation_geo_pdf['ts']
-    # Select columns
-    conversation_pdf = conversation_geo_pdf[['channel','type','subtype','ts','thread_ts','ts_int','time','user','real_name','name','text','city','COUNTRY','ISO']];
-    # Rename columns
-    # remove all upper-case to allow easier postgres implementation (changed to lowercase)
-    # ddpdf = conversation_pdf.rename(columns={'channel':'CHANNEL','type':'TYPE','subtype':'SUBTYPE','ts':'TS','thread_ts':'THREAD_TS','ts_int':'TS_INT','time':'TIME','user':'USER','real_name':'REAL_NAME','name':'NAME','text':'TEXT','city':'CITY','COUNTRY':'COUNTRY','ISO':'ISO'});
-    ddpdf = conversation_pdf.rename(columns={'channel':'channel','type':'type','subtype':'subtype','ts':'ts','thread_ts':'thread_ts','ts_int':'ts_int','time':'time','user':'user','real_name':'real_name','name':'name','text':'text','city':'city','COUNTRY':'country','ISO':'iso'});
-
-    dd_writefile(metrics,filename,ddpdf);
-  except Exception as err:
-    print('Error');
-    print(err);
+      dd_writefile(metrics,filename,ddpdf);
+    except Exception as err:
+      print('Error - create_conversationdata');
+      print(err);
 
 def create_useractivedata():
   filename = "useractive_data";
@@ -674,9 +697,8 @@ def create_useractivedata():
     conversation_pdf = conversation_pdf.sort_values(['user','ts'],ascending=(True,True));
     user_pdf = dd_readfile(master,'user_data');
     user_pdf = user_pdf.sort_values(['id','batch'],ascending=(True,True));
-    reaction_pdf = dd_readfile(master,'reaction_data');
-    reaction_pdf = reaction_pdf.sort_values(['user','ts'],ascending=(True,True));
-
+    # reaction_pdf = dd_readfile(master,'reaction_data');
+    # reaction_pdf = reaction_pdf.sort_values(['user','ts'],ascending=(True,True));
     ll = []
     for user in user_pdf.values.tolist():
       userconv_pdf = conversation_pdf[conversation_pdf['user'] == user[0]];
@@ -689,31 +711,39 @@ def create_useractivedata():
       reaction_count = ''
       if len(userconv_pdf) > 0:
         join_date = userconv_pdf['ts'].iloc[0]
-        u1_pdf_1 = userconv_pdf[userconv_pdf['subtype'] == 'thread_broadcast'];
-        u1_pdf_2 = userconv_pdf[userconv_pdf['subtype'].isnull()];
-        useract_pdf = u1_pdf_1.append(u1_pdf_2,ignore_index=False);
-        useract_pdf = useract_pdf.sort_values(['user','ts'],ascending=(True,True));
+        if data_type == "slack":
+            u1_pdf_1 = userconv_pdf[userconv_pdf['subtype'] == 'thread_broadcast'];
+            u1_pdf_2 = userconv_pdf[userconv_pdf['subtype'].isnull()];
+            useract_pdf = u1_pdf_1.append(u1_pdf_2,ignore_index=False);
+            useract_pdf = useract_pdf.sort_values(['user','ts'],ascending=(True,True));
+        else:
+            useract_pdf = userconv_pdf[userconv_pdf['subtype'] == 'default'];
         if len(useract_pdf) > 0:
           message_count = len(useract_pdf)
           first_message_date = useract_pdf['ts'].iloc[0]
           last_message_date = useract_pdf['ts'].iloc[len(useract_pdf)-1]
-        if float(user[5]) > float(join_date):
-          invite_date = join_date
-        else:
-          invite_date = user[5]
+        if data_type == "slack":
+            if float(user[5]) > float(join_date):
+              invite_date = join_date
+            else:
+              invite_date = user[5]
       else:
-        invite_date = user[5]
-      userreact_pdf = reaction_pdf[reaction_pdf['user'] == user[0]];
-      if len(userreact_pdf) > 0:
-        reaction_count = len(userreact_pdf)
-        first_reaction_date = userreact_pdf['ts'].iloc[0]
-        last_reaction_date = userreact_pdf['ts'].iloc[len(userreact_pdf)-1]
-      ll.append({'user': user[0], 'name': user[1], 'invite_date': invite_date, 'join_date': join_date, 'message_count': message_count, 'first_message_date': first_message_date, 'last_message_date': last_message_date, 'reaction_count': reaction_count, 'first_reaction_date': first_reaction_date, 'last_reaction_date': last_reaction_date})
+        if data_type == "slack":
+            invite_date = user[5]
+      # userreact_pdf = reaction_pdf[reaction_pdf['user'] == user[0]];
+      # if len(userreact_pdf) > 0:
+      #   reaction_count = len(userreact_pdf)
+      #   first_reaction_date = userreact_pdf['ts'].iloc[0]
+      #   last_reaction_date = userreact_pdf['ts'].iloc[len(userreact_pdf)-1]
+      if data_type == "slack":
+          ll.append({'user': user[0], 'name': user[1], 'invite_date': invite_date, 'join_date': join_date, 'message_count': message_count, 'first_message_date': first_message_date, 'last_message_date': last_message_date, 'reaction_count': reaction_count, 'first_reaction_date': first_reaction_date, 'last_reaction_date': last_reaction_date})
+      else:
+          ll.append({'USER': user[0], 'INVITE_DATE': user[5], 'JOIN_DATE': join_date, 'MESSAGE_COUNT': message_count, 'FIRST_MESSAGE_DATE': first_message_date, 'LAST_MESSAGE_DATE': last_message_date, 'REACTION_COUNT': reaction_count, 'FIRST_REACTION_DATE': first_reaction_date, 'LAST_REACTION_DATE': last_reaction_date})
 
     ddpdf = pandas.DataFrame.from_records(ll);
     dd_writefile(metrics,filename,ddpdf);
   except Exception as err:
-    print('Error');
+    print('Error - create_useractivedata');
     print(err);
 
 def create_nodedata():
@@ -721,28 +751,35 @@ def create_nodedata():
   try:
     channel_pdf = dd_readfile(master,'channel_data');
     user_pdf = dd_readfile(master,'user_data');
+    if data_type == "slack":
+        zone_ref_pdf = dd_readref('zone');
+        country_ref_pdf = dd_readref('country');
 
-    zone_ref_pdf = dd_readref('zone');
-    country_ref_pdf = dd_readref('country');
-
-    # From user data, split as a method to create default country (if timezone is not recognised).
-    tz_split = user_pdf['tz'].str.split('/',expand=True);
-    # Merge to create richer iso information
-    iso_ref_pdf = zone_ref_pdf.merge(country_ref_pdf,left_on='ISO',right_on='ISO2');
-    # Merge iso information with user (based upon timezone).
-    user_geo_pdf = user_pdf.merge(iso_ref_pdf,how='left',left_on='tz',right_on='TZ');
-    # Augment columns for union 
-    # Add country and city based upon user data timezone
-    user_geo_pdf['country']  = tz_split[0];
-    user_geo_pdf['city']  = tz_split[1];
-    # Mask NAN values of country based upon timezone information
-    user_geo_pdf['COUNTRY'] = user_geo_pdf['COUNTRY'].mask(pandas.isnull, user_geo_pdf['country']);
+        # From user data, split as a method to create default country (if timezone is not recognised).
+        tz_split = user_pdf['tz'].str.split('/',expand=True);
+        # Merge to create richer iso information
+        iso_ref_pdf = zone_ref_pdf.merge(country_ref_pdf,left_on='ISO',right_on='ISO2');
+        # Merge iso information with user (based upon timezone).
+        user_geo_pdf = user_pdf.merge(iso_ref_pdf,how='left',left_on='tz',right_on='TZ');
+        # Augment columns for union
+        # Add country and city based upon user data timezone
+        user_geo_pdf['country']  = tz_split[0];
+        user_geo_pdf['city']  = tz_split[1];
+        # Mask NAN values of country based upon timezone information
+        user_geo_pdf['COUNTRY'] = user_geo_pdf['COUNTRY'].mask(pandas.isnull, user_geo_pdf['country']);
+    else:
+        user_geo_pdf['ISO'] = '';
+        user_geo_pdf['country'] = '';
+        user_geo_pdf['city'] = '';
+        user_geo_pdf['COUNTRY'] = '';
     # Add "null" columns for union
     user_geo_pdf['type'] = 'user'
     user_geo_pdf['channel_type'] = None
     user_geo_pdf['channel_class'] = None
+    if data_type == "discord":
+        user_geo_pdf['name'] = user_geo_pdf['name'].mask(pandas.isnull, user_geo_pdf['real_name']);
     user_part_pdf = user_geo_pdf[['id','name','type','real_name','ISO','COUNTRY','city','channel_type','channel_class']];
-    # Augment columns for union 
+    # Augment columns for union
     channel_pdf = channel_pdf.rename(columns={'type':'channel_type','class':'channel_class'});
     channel_pdf['type'] = 'channel'
     channel_pdf['name'] = channel_pdf['name'].mask(pandas.isnull, channel_pdf['id']);
@@ -761,7 +798,7 @@ def create_nodedata():
 
     dd_writefile(metrics,filename,ddpdf);
   except Exception as err:
-    print('Error');
+    print('Error - create_nodedata');
     print(err);
 
 def create_edgedata():
@@ -771,42 +808,80 @@ def create_edgedata():
     c1_pdf = conversation_pdf.copy();
     reaction_pdf = dd_readfile(master,'reaction_data');
     tag_pdf = dd_readfile(metrics,'tag_data');
-    c1_pdf_1 = c1_pdf[c1_pdf['subtype'] == 'thread_broadcast'];
-    c1_pdf_2 = c1_pdf[c1_pdf['subtype'].isnull()];
-    c1_pdf = c1_pdf_1.append(c1_pdf_2,ignore_index=False);
-    c2_pdf = c1_pdf.copy();
-    c2_pdf = c2_pdf[c2_pdf['thread_ts'].notnull()];
-    c4_pdf = c1_pdf.merge(c2_pdf,how='left',left_on='thread_ts',right_on='ts');
-    # print(c4_pdf.shape);
-    c4_pdf = c4_pdf[c4_pdf['user_x'] != c4_pdf['user_y']];
-    c4_pdf = c4_pdf[['channel_x','user_x','user_y']];
-    c4_pdf['user_y'] = c4_pdf['user_y'].mask(pandas.isnull, c4_pdf['channel_x']);
-    c4_pdf['relate'] = 'interacts';
-    c4_pdf = c4_pdf.rename(columns={'channel_x':'channel','user_x':'source','user_y':'target','relate':'relate'});
-    # print(c4_pdf.shape);
-    c3_pdf = c1_pdf.copy();
-    c5_pdf = c3_pdf.merge(reaction_pdf,how='left',left_on='ts',right_on='ts');
-    c5_pdf = c5_pdf[c5_pdf['user_y'].notnull()];
-    c5_pdf = c5_pdf[['channel_x','user_x','user_y']];
-    c5_pdf['relate'] = 'reacts';
-    c5_pdf = c5_pdf.rename(columns={'channel_x':'channel','user_x':'source','user_y':'target','relate':'relate'});
-    # print(c5_pdf.shape);
-    c6_pdf = c1_pdf.copy();
-    c6_pdf = c6_pdf.merge(tag_pdf,how='left',on='ts');
-    c6_pdf = c6_pdf[c6_pdf['user'].notnull()];
-    c6_pdf = c6_pdf[c6_pdf['type_y'] == 'user'];
-    c6_pdf = c6_pdf[['channel_x','user','tag']];
-    c6_pdf['relate'] = 'refers';
-    c6_pdf = c6_pdf.rename(columns={'channel_x':'channel','user':'source','tag':'target','relate':'relate'});
-    # print(c6_pdf.shape);
-    # print(c6_pdf);
-    ddpdf = c4_pdf.append(c5_pdf,ignore_index=True);
-    ddpdf = ddpdf.append(c6_pdf,ignore_index=True);
+    if data_type == "slack":
+        c1_pdf_1 = c1_pdf[c1_pdf['subtype'] == 'thread_broadcast'];
+        c1_pdf_2 = c1_pdf[c1_pdf['subtype'].isnull()];
+        c1_pdf = c1_pdf_1.append(c1_pdf_2,ignore_index=False);
+        c2_pdf = c1_pdf.copy();
+        c2_pdf = c2_pdf[c2_pdf['thread_ts'].notnull()];
+        c4_pdf = c1_pdf.merge(c2_pdf,how='left',left_on='thread_ts',right_on='ts');
+        # print(c4_pdf.shape);
+        c4_pdf = c4_pdf[c4_pdf['user_x'] != c4_pdf['user_y']];
+        c4_pdf = c4_pdf[['channel_x','user_x','user_y']];
+        c4_pdf['user_y'] = c4_pdf['user_y'].mask(pandas.isnull, c4_pdf['channel_x']);
+        c4_pdf['relate'] = 'interacts';
+        c4_pdf = c4_pdf.rename(columns={'channel_x':'channel','user_x':'source','user_y':'target','relate':'relate'});
+        # print(c4_pdf.shape);
+        c3_pdf = c1_pdf.copy();
+        c5_pdf = c3_pdf.merge(reaction_pdf,how='left',left_on='ts',right_on='ts');
+        c5_pdf = c5_pdf[c5_pdf['user_y'].notnull()];
+        c5_pdf = c5_pdf[['channel_x','user_x','user_y']];
+        c5_pdf['relate'] = 'reacts';
+        c5_pdf = c5_pdf.rename(columns={'channel_x':'channel','user_x':'source','user_y':'target','relate':'relate'});
+        # print(c5_pdf.shape);
+        c6_pdf = c1_pdf.copy();
+        c6_pdf = c6_pdf.merge(tag_pdf,how='left',on='ts');
+        c6_pdf = c6_pdf[c6_pdf['user'].notnull()];
+        c6_pdf = c6_pdf[c6_pdf['type_y'] == 'user'];
+        c6_pdf = c6_pdf[['channel_x','user','tag']];
+        c6_pdf['relate'] = 'refers';
+        c6_pdf = c6_pdf.rename(columns={'channel_x':'channel','user':'source','tag':'target','relate':'relate'});
+        # print(c6_pdf.shape);
+        # print(c6_pdf);
+        ddpdf = c4_pdf.append(c5_pdf,ignore_index=True);
+        ddpdf = ddpdf.append(c6_pdf,ignore_index=True);
+    else:
+        c1_pdf = c1_pdf[c1_pdf['SUBTYPE'] == 'default'];
+        c2_pdf = c1_pdf.copy();
+        c2_pdf['TARGET'] = c2_pdf['CHANNEL'];
+        c2_pdf['RELATE'] = 'teams';
+        c2_pdf = c2_pdf.rename(columns={'CHANNEL':'CHANNEL','USER':'SOURCE','TARGET':'TARGET','RELATE':'RELATE'});
+        c2_pdf = c2_pdf[['CHANNEL','SOURCE','TARGET','RELATE']];
+        # print(c4_pdf.shape);
+        c3_pdf = c1_pdf.copy();
+        c4_pdf = c3_pdf.merge(c3_pdf,how='left',left_on='CHANNEL',right_on='CHANNEL');
+        c4_pdf = c4_pdf[c4_pdf['USER_x'] != c4_pdf['USER_y']];
+        c4_pdf = c4_pdf[['CHANNEL','USER_x','USER_y']];
+        c4_pdf['RELATE'] = 'interacts';
+        c4_pdf = c4_pdf.rename(columns={'CHANNEL':'CHANNEL','USER_x':'SOURCE','USER_y':'TARGET','RELATE':'RELATE'});
+        c4_pdf = c4_pdf[['CHANNEL','SOURCE','TARGET','RELATE']];
+        # print(c4_pdf.shape);
+        c5_pdf = c1_pdf.copy();
+        c6_pdf = c5_pdf.merge(reaction_pdf,how='left',left_on='TS',right_on='ts');
+        c6_pdf = c6_pdf[c6_pdf['user'].notnull()];
+        c6_pdf = c6_pdf[['CHANNEL','USER','user']];
+        c6_pdf['RELATE'] = 'reacts';
+        c6_pdf = c6_pdf.rename(columns={'CHANNEL':'CHANNEL','USER':'SOURCE','user':'TARGET','RELATE':'RELATE'});
+        c6_pdf = c6_pdf[['CHANNEL','SOURCE','TARGET','RELATE']];
+        # print(c5_pdf.shape);
+        c7_pdf = c1_pdf.copy();
+        c8_pdf = c7_pdf.merge(tag_pdf,how='left',on='TS');
+        c8_pdf = c8_pdf[c8_pdf['USER'].notnull()];
+        c8_pdf = c8_pdf[c8_pdf['TYPE_y'] == 'user'];
+        c8_pdf = c8_pdf[['CHANNEL_x','USER','TAG']];
+        c8_pdf['RELATE'] = 'refers';
+        c8_pdf = c8_pdf.rename(columns={'CHANNEL_x':'CHANNEL','USER':'SOURCE','TAG':'TARGET','RELATE':'RELATE'});
+        # print(c8_pdf.shape);
+        # print(c8_pdf);
+        ddpdf = c2_pdf.append(c4_pdf,ignore_index=True);
+        ddpdf = ddpdf.append(c6_pdf,ignore_index=True);
+        ddpdf = ddpdf.append(c8_pdf,ignore_index=True);
+
     print(ddpdf);
 
     dd_writefile(metrics,filename,ddpdf);
   except Exception as err:
-    print('Error');
+    print('Error - create_edgedata');
     print(err);
 
 def aggregate_conversationdata():
@@ -815,13 +890,20 @@ def aggregate_conversationdata():
     user_pdf = dd_readfile(master,'user_data');
 
     c1_pdf = dd_readfile(metrics,'conversation_data');
-    c1_pdf_1 = c1_pdf[c1_pdf['subtype'] == 'thread_broadcast'];
-    c1_pdf_2 = c1_pdf[c1_pdf['subtype'].isnull()];
-    c1_pdf = c1_pdf_1.append(c1_pdf_2,ignore_index=False);
-    agg_pdf = c1_pdf.groupby('channel').count()[['ts','thread_ts']];
-    # print(agg_pdf);
-    dd_writefile(metrics,'aggr_by_channel',agg_pdf,True);
-    agg_pdf = c1_pdf.groupby(['channel','user']).count()[['ts','thread_ts']];
+    if data_type == "slack":
+        c1_pdf_1 = c1_pdf[c1_pdf['subtype'] == 'thread_broadcast'];
+        c1_pdf_2 = c1_pdf[c1_pdf['subtype'].isnull()];
+        c1_pdf = c1_pdf_1.append(c1_pdf_2,ignore_index=False);
+        agg_pdf = c1_pdf.groupby('channel').count()[['ts','thread_ts']];
+        # print(agg_pdf);
+        dd_writefile(metrics,'aggr_by_channel',agg_pdf,True);
+        agg_pdf = c1_pdf.groupby(['channel','user']).count()[['ts','thread_ts']];
+    else:
+        c1_pdf = c1_pdf[c1_pdf['subtype'] == 'default'];
+        agg_pdf = c1_pdf.groupby('channel').count()[['ts']];
+        # print(agg_pdf);
+        dd_writefile(metrics,'aggr_by_channel',agg_pdf,True);
+        agg_pdf = c1_pdf.groupby(['channel','user']).count()[['ts']];
     # print(agg_pdf);
     dd_writefile(metrics,'aggr_by_channel_user',agg_pdf,True);
     unique_pdf = agg_pdf.copy();
@@ -842,7 +924,7 @@ def aggregate_conversationdata():
     # print(m4_pdf);
     dd_writefile(metrics,'max_by_channel_user',m4_pdf);
   except Exception as err:
-    print('Error');
+    print('Error - aggregate_conversationdata');
     print(err);
 
 def create_timediff_conversations():
@@ -870,43 +952,45 @@ def create_timediff_conversations():
     # print(ddpdf.dtypes);
     dd_writefile(metrics,filename,ddpdf);
   except Exception as err:
-    print('Error');
+    print('Error - create_timediff_conversations');
     print(err);
 
 def create_timediff_threads():
-  filename = "threads_timediff_data";
-  try:
-    df = dd_readfile(metrics,'conversation_data');
-    df = df[df['thread_ts'].notnull()];
-    df = df.sort_values(['channel','thread_ts','ts'],ascending=(True,True,True));
-    df['time_ts'] = pandas.to_datetime(df['time']);
-    # print(df);
-    ddf = df[['channel','thread_ts','time_ts']];
-    # print(ddf);
-    # print(ddf.dtypes);
-    ddf = ddf.groupby(['channel','thread_ts']).diff();
-    ddf['time_ts'] = ddf['time_ts'] / numpy.timedelta64(1, 's');
-    ddf['time_ts'] = ddf['time_ts'].mask(pandas.isnull, 0);
-    # print(ddf);
-    # print(ddf.dtypes);
-    df = df.merge(ddf,left_index=True,right_index=True);
-    # print(df);
-    # print(df.dtypes);
-    # ddpdf = df[['CHANNEL','TYPE','SUBTYPE','TS','THREAD_TS','TS_INT','TIME','USER','REAL_NAME','NAME','TEXT','CITY','COUNTRY','ISO','TIME_TS_y']];
-    ddpdf = df[['channel','type','subtype','ts','thread_ts','ts_int','time','user','real_name','name','text','city','country','iso','time_ts_y']];
-    ddpdf = ddpdf.rename(columns={'time_ts_y':'diff'});
-    # print(ddpdf);
-    # print(ddpdf.dtypes);
-    dd_writefile(metrics,filename,ddpdf);
-  except Exception as err:
-    print('Error');
-    print(err);
+  if data_type == "slack":
+    filename = "threads_timediff_data";
+    try:
+      df = dd_readfile(metrics,'conversation_data');
+      df = df[df['thread_ts'].notnull()];
+      df = df.sort_values(['channel','thread_ts','ts'],ascending=(True,True,True));
+      df['time_ts'] = pandas.to_datetime(df['time']);
+      # print(df);
+      ddf = df[['channel','thread_ts','time_ts']];
+      # print(ddf);
+      # print(ddf.dtypes);
+      ddf = ddf.groupby(['channel','thread_ts']).diff();
+      ddf['time_ts'] = ddf['time_ts'] / numpy.timedelta64(1, 's');
+      ddf['time_ts'] = ddf['time_ts'].mask(pandas.isnull, 0);
+      # print(ddf);
+      # print(ddf.dtypes);
+      df = df.merge(ddf,left_index=True,right_index=True);
+      # print(df);
+      # print(df.dtypes);
+      # ddpdf = df[['CHANNEL','TYPE','SUBTYPE','TS','THREAD_TS','TS_INT','TIME','USER','REAL_NAME','NAME','TEXT','CITY','COUNTRY','ISO','TIME_TS_y']];
+      ddpdf = df[['channel','type','subtype','ts','thread_ts','ts_int','time','user','real_name','name','text','city','country','iso','time_ts_y']];
+      ddpdf = ddpdf.rename(columns={'time_ts_y':'diff'});
+      # print(ddpdf);
+      # print(ddpdf.dtypes);
+      dd_writefile(metrics,filename,ddpdf);
+    except Exception as err:
+      print('Error - create_timediff_threads');
+      print(err);
 
 def create_timediff_users():
   filename = "users_timediff_data";
   try:
     df = dd_readfile(metrics,'conversation_data');
-    df = df[df['thread_ts'].notnull()];
+    if data_type == "slack":
+        df = df[df['thread_ts'].notnull()];
     df = df.sort_values(['user','ts'],ascending=(True,True));
     df['user_hash'] = df['user'].apply(hash);
     df['time_ts'] = pandas.to_datetime(df['time']);
@@ -929,7 +1013,7 @@ def create_timediff_users():
     # print(ddpdf.dtypes);
     dd_writefile(metrics,filename,ddpdf);
   except Exception as err:
-    print('Error');
+    print('Error - create_timediff_users');
     print(err);
 
 def aggregate_threads():
@@ -946,53 +1030,72 @@ def aggregate_threads():
     print(ddf);
     dd_writefile(metrics,'aggr_by_thread_user',ddf);
   except Exception as err:
-    print('Error');
+    print('Error - aggregate_threads');
     print(err);
 
 def extract_tags():
-  filename = "tag_data";
-  try:
-    df = dd_readfile(metrics,'conversation_data');
-    udf = dd_readfile(master,'user_data');
-    df_1 = df[df['subtype'] == 'thread_broadcast'];
-    df_2 = df[df['subtype'].isnull()];
-    df = df_1.append(df_2,ignore_index=True);
-    df = df[['channel','ts','text']];
-    df = df[df['text'].notnull()];
-    df = df.set_index('ts');
-    utdf = df['text'].str.extractall(r'<@(?P<tag>.*?)>');
-    utdf['type'] = 'user';
-    utdf.reset_index(inplace=True);
-    utdf = utdf.merge(udf,how='left',left_on='tag',right_on='id');
-    utdf = utdf.rename(columns={'real_name':'nice_tag'});
-    utdf.reset_index(inplace=True);
-    utdf = utdf[['ts','tag','nice_tag','type']];
-    ctdf = df['text'].str.extractall(r'<#(?P<tag>.*?)>');
-    ctdf = ctdf['tag'].str.split('|',expand=True)
-    ctdf['type'] = 'channel';
-    ctdf = ctdf.rename(columns={0:'tag',1:'nice_tag'});
-    ctdf.reset_index(inplace=True);
-    ctdf = ctdf[['ts','tag','nice_tag','type']];
-    ltdf = df['text'].str.extractall(r'<(?P<tag>.*?)>');
-    ltdf = ltdf[ltdf['tag'].str.contains('^[^@#]')];
-    ltdf = ltdf['tag'].str.split('|',expand=True)
-    ltdf = ltdf.rename(columns={0:'tag',1:'nice_tag'});
-    ltdf['type'] = 'link';
-    ltdf.reset_index(inplace=True);
-    ltdf = ltdf[['ts','tag','nice_tag','type']];
-    df.reset_index(inplace=True);
-    print(utdf);
-    print(ctdf);
-    print(ltdf);
-    tdf = pandas.concat([utdf,ctdf,ltdf],ignore_index=True)
-    print(tdf);
-    ddf = df.merge(tdf,how='right',on='ts');
-    ddf = ddf[['channel','ts','tag','nice_tag','type']];
-    print(ddf);
-    dd_writefile(metrics,filename,ddf);
-  except Exception as err:
-    print('Error');
-    print(err);
+    filename = "tag_data";
+    try:
+      df = dd_readfile(metrics,'conversation_data');
+      udf = dd_readfile(master,'user_data');
+      if data_type == "slack":
+          df_1 = df[df['subtype'] == 'thread_broadcast'];
+          df_2 = df[df['subtype'].isnull()];
+          df = df_1.append(df_2,ignore_index=True);
+      else:
+          df = df[df['subtype'] == 'default'];
+      df = df[['channel','ts','text']];
+      df = df[df['text'].notnull()];
+      df = df.set_index('ts');
+      if data_type == "slack":
+          utdf = df['text'].str.extractall(r'<@(?P<tag>.*?)>');
+      else:
+          utdf = df['text'].str.extractall(r'<@!(?P<tag>.*?)>');
+      utdf['type'] = 'user';
+      utdf.reset_index(inplace=True);
+      utdf = utdf.merge(udf,how='left',left_on='tag',right_on='id');
+      utdf = utdf.rename(columns={'real_name':'nice_tag'});
+      utdf.reset_index(inplace=True);
+      utdf = utdf[['ts','tag','nice_tag','type']];
+      ctdf = df['text'].str.extractall(r'<#(?P<tag>.*?)>');
+      # <#ID|NAME>
+      if data_type == "slack":
+          ctdf = ctdf['tag'].str.split('|', expand=True)
+          ctdf['type'] = 'channel';
+          ctdf = ctdf.rename(columns={0: 'tag', 1: 'nice_tag'});
+      else:
+          cdf = dd_readfile(master, 'channel_data');
+          ctdf = ctdf.merge(cdf, how='left',left_on='tag',right_on='id')
+          ctdf['type'] = 'channel';
+          ctdf = ctdf.rename(columns={'name': 'nice_tag'});
+          ctdf['ts'] = 0;
+      ctdf.reset_index(inplace=True);
+      ctdf = ctdf[['ts', 'tag', 'nice_tag', 'type']];
+      if data_type == "slack":
+          ltdf = df['text'].str.extractall(r'<(?P<tag>.*?)>');
+          ltdf = ltdf[ltdf['tag'].str.contains('^[^@#]')];
+          ltdf = ltdf['tag'].str.split('|',expand=True)
+          ltdf = ltdf.rename(columns={0:'tag',1:'nice_tag'});
+          ltdf['type'] = 'link';
+          ltdf.reset_index(inplace=True);
+          ltdf = ltdf[['ts','tag','nice_tag','type']];
+      df.reset_index(inplace=True);
+      print(utdf);
+      print(ctdf)
+      if data_type == "slack":
+          print(ltdf);
+          tdf = pandas.concat([utdf,ctdf,ltdf],ignore_index=True)
+      else:
+          tdf = pandas.concat([utdf, ctdf], ignore_index=True)
+      print(tdf);
+      print(df)
+      ddf = df.merge(tdf,how='right',on='ts');
+      ddf = ddf[['channel','ts','tag','nice_tag','type']];
+      print(ddf);
+      dd_writefile(metrics,filename,ddf);
+    except Exception as err:
+      print('Error - extract_tags');
+      print(err);
 
 def exec_stages():
   dd_makedirs();
@@ -1040,8 +1143,8 @@ def exec_stages():
       create_timediff_threads();
       create_timediff_users();
       extract_tags();
-      create_nodedata();
-      create_edgedata();
+      #create_nodedata();
+      #create_edgedata();
       print("");
     except Exception as err:
       print(err)
@@ -1065,8 +1168,8 @@ try:
   sign_token = os.environ['SLACK_SIGN_TOKEN']
   access_token = os.environ['SLACK_ACCESS_TOKEN']
   user_token = os.environ['SLACK_USER_TOKEN']
-  # user_token = 'SLACK_USER_TOKEN'  
-  data_home = os.environ['SLACK_DATA_HOME']
+  # user_token = 'SLACK_USER_TOKEN'
+  data_home = os.environ['DISCORD_DATA_HOME']
 except:
   print('no tokens available')
   data_home = "."

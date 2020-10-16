@@ -657,7 +657,9 @@ async def retrieve_messagedata(self, channel_id):
     tagdata_result = []
     reaction_result = []
     for entry in result:
-      formatted_result.append({'channel': str(channel.id), 'type': 'message', 'subtype': entry.type.name, 'id': str(entry.id), 'ts': str(entry.created_at),
+      # ts = unique ID based on time (slack concept) - discord uses snowflake ID in this case
+      # time = UTC formatted time
+      formatted_result.append({'channel': str(channel.id), 'type': 'message', 'subtype': entry.type.name, 'id': str(entry.id), 'ts': str(entry.id),
                  'thread_ts': '', 'time': datetime_to_isostr(entry.created_at), 'reply_count': 0,
                  'user': str(entry.author.id), 'text': entry.system_content});
       for attach in entry.attachments:
